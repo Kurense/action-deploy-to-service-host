@@ -1,0 +1,102 @@
+---
+name: 'Deploy to Service Host'
+description: Deploy application to "service host" running Docker on a Google Compute instance
+
+inputs:
+  application-name:
+    required: true
+    description: 'Name of the application, matching the name of the application directory on the host'
+  application-release-name:
+    required: true
+    description: 'Name of the release, to be reported to Sentry at deployment or when an error occurs'
+  application-service-names:
+    required: false
+    default: "web"
+    description: 'Names (space-separated) of the services, as defined in the Docker Compose config, to be restarted when the application is deployed'
+  deployment-registry-hostname:
+    required: true
+    description: 'Hostname of the Docker registry where the deployment image is stored, used to set up authentication for pulling the image'
+  deployment-image-name:
+    required: true
+    description: |
+      Docker image name of the deployment image, used to tag and push the image to the registry.
+      This should be the full path to the image without a tag, including the registry hostname.
+      Should match the base image that was configured in the docker-compose file for the application.
+  deployment-image-tag:
+    required: true
+    description: 'Tag of the Docker image to be deployed, will be appended to the deployment image name'
+  gcp-project-id:
+    required: true
+    description: 'ID of the Google Cloud project where the instance is running'
+  gcp-instance-name:
+    required: true
+    description: 'Name of the Google Compute instance where the application is to be deployed'
+  gcp-instance-zone:
+    required: true
+    description: 'Zone of the Google Compute instance where the application is to be deployed'
+  gcp-credentials:
+    required: true
+    description: |
+      Service account JSON key for authenticating with Google Cloud.
+      Used for authenticating with the "deployment-registry-hostname" Docker registry, and for
+      connecting via SSH to the Google Compute instance.
+  source-image-name:
+    required: true
+    description: 'Docker image name of the source image, which is expected to be in GitHub Container Registry'
+  github-token:
+    required: true
+    default: ${{ github.token }}
+    description: 'GitHub token used to authenticate with the GitHub Container Registry, where the docker image will be pulled from'
+  github-container-registry-username:
+    required: true
+    default: ${{ github.repository_owner }}
+    description: 'Username for authenticating with the GitHub Container Registry'
+
+runs:
+
+  using: composite
+
+  steps:
+    - name: Authenticate GCP
+      uses: 'google-github-actions/auth@v2'
+      with:
+        credentials_json: '${{ inputs.gcp-credentials }}'
+
+    - name: 'Install gcloud CLI'
+      uses: 'google-github-actions/setup-gcloud@v2'
+
+    - name: 'Configure Docker authentication'
+      run: gcloud auth configure-docker ${{ inputs.deployment-registry-hostname }}
+      shell: bash
+
+    - name: Authenticate GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ inputs.github-container-registry-username }}
+        password: ${{ inputs.github-token }}
+
+    - name: 'Pull deployment image from GitHub Container Registry'
+      run: |
+        docker pull ${{ inputs.source-image-name }}:${{ inputs.deployment-image-tag }}
+      shell: bash
+
+    - name: Push deployment image to GCP registry
+      run: |
+        docker tag ${{ inputs.source-image-name }}:${{ inputs.deployment-image-tag }} ${{ inputs.deployment-image-name }}:${{ inputs.deployment-image-tag }} && \
+        docker push ${{ inputs.deployment-image-name }}:${{ inputs.deployment-image-tag }}
+      shell: bash
+
+    - name: Deploy
+      run: |
+        gcloud compute ssh ${{ inputs.gcp-instance-name }} \
+          --zone=${{ inputs.gcp-instance-zone }} \
+          --project=${{ inputs.gcp-project-id }} \
+          --tunnel-through-iap \
+          -- \
+          "gcloud auth configure-docker ${{ inputs.deployment-registry-hostname }} && \
+          cd /opt/hosted-services/${{ inputs.application-name }} && \
+          echo "TAG=${{ inputs.deployment-image-tag }}" > .env && \
+          echo "RELEASE=${{ inputs.application-release-name }}" >> .env && \
+          docker rollout ${{ inputs.application-service-names }}"
+      shell: bash
