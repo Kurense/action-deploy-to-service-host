@@ -90,6 +90,7 @@ runs:
     - name: Deploy
       run: |
         gcloud compute ssh ${{ inputs.gcp-instance-name }} \
+          --ssh-key-expire-after 30s \
           --zone=${{ inputs.gcp-instance-zone }} \
           --project=${{ inputs.gcp-project-id }} \
           --tunnel-through-iap \
