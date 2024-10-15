@@ -9,10 +9,11 @@ inputs:
   application-release-name:
     required: true
     description: 'Name of the release, to be reported to Sentry at deployment or when an error occurs'
-  application-service-names:
-    required: false
-    default: "web"
-    description: 'Names (space-separated) of the services, as defined in the Docker Compose config, to be restarted when the application is deployed'
+  application-deployment-command:
+    default: 'docker rollout web'
+    description: |
+      Command to run on the service host to deploy the application.
+      Runs in the application directory on the host.
   deployment-registry-hostname:
     required: true
     description: 'Hostname of the Docker registry where the deployment image is stored, used to set up authentication for pulling the image'
@@ -99,5 +100,5 @@ runs:
           cd /opt/hosted-services/${{ inputs.application-name }} && \
           echo "TAG=${{ inputs.deployment-image-tag }}" > .env && \
           echo "RELEASE=${{ inputs.application-release-name }}" >> .env && \
-          docker rollout ${{ inputs.application-service-names }}"
+          ${{ inputs.application-deployment-command }}"
       shell: bash
